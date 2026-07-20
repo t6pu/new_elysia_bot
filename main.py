@@ -137,7 +137,7 @@ async def on_message(message):
     if message.author == bot.user:
         return
 
-    # جلب أسماء رتب العضو المرسل
+    # جلب أسماء رتب العضو المرسل بشكل آمن لمنع الأخطاء في الخاص
     user_roles = [role.name for role in message.author.roles] if hasattr(message.author, 'roles') else []
     is_queen = "*༺ Queen ༻*" in user_roles
 
@@ -161,6 +161,7 @@ async def on_message(message):
         await message.channel.send("لا تسلكِ مافي شي يضحك")
         return
 
+    # هام جداً: معالجة الأوامر دائماً لضمان عدم تعليق البوت!
     await bot.process_commands(message)
 
 # --- الأوامر الإدارية والتحكم ---
@@ -231,7 +232,7 @@ async def set_streak_name(ctx, member: discord.Member, streak_count: int):
 @bot.command(name='يا')
 async def ya(ctx, *, arg=None):
     if arg == 'فانزي':
-        await ctx.send("لبيه يا عيوني? 🌸")
+        await ctx.send("لبيه يا عيوني؟ 🌸")
 
 # --- أوامر الألعاب بالكامل ---
 
@@ -375,4 +376,4 @@ async def fast_game(ctx):
 token = os.getenv("TOKEN")
 if token:
     bot.run(token)
-    
+                    
