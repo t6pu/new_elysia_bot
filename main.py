@@ -1,379 +1,231 @@
 import discord
 from discord.ext import commands
+import asyncio
 import random
 import os
-import re
-import asyncio
 
-# إعداد الصلاحيات الكاملة للبوت
+# ---- إعدادات البوت الأساسية والصلاحيات الكاملة ----
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-intents.presences = True
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# متغير افتراضي لحالة إيقاف الألعاب مؤقتاً
 is_paused = False
 
-# --- بيانات الألعاب الافتراضية لمنع الأخطاء البرمجية ---
-replica_letters = ["أ", "ب", "ت", "ج", "ح", "خ", "د", "ر", "ز", "س", "ش", "ع", "ف", "ق", "ك", "م", "ن", "هـ", "و", "ي"]
-cut_tweets = [
-    "شخص مستحيل ترفضين له طلب؟",
-    "صفة فيكِ تبغين تغيرينها؟",
-    "أكثر شي يعدل مزاجكِ بكلمتين؟",
-    "لو أتيحت لكِ فرصة السفر الآن، وين تروحين؟",
-    "شيء سويتيه وندمتِ عليه لاحقاً؟"
-]
-fast_words = ["سيرفر", "ديسكورد", "فعاليات", "أليسيا", "ملكة", "كراسي", "مافيا"]
-guess_country_data = [
-    {"image": "https://images.unsplash.com/photo-1543731068-7e0f5beff43a", "answer": "مصر"},
-    {"image": "https://images.unsplash.com/photo-1502602898657-3e91760cbb34", "answer": "فرنسا"}
-]
-flags_data = [
-    {"image": "https://flagcdn.com/w640/sa.png", "answer": "السعودية"},
-    {"image": "https://flagcdn.com/w640/ae.png", "answer": "الإمارات"}
-]
+# ---- الديكوريتور الخاص بحماية الرتب العليا للأوامر العادية ----
+def has_allowed_role():
+    async def predicate(ctx):
+        member_role_names = [role.name for role in ctx.author.roles]
+        return any(role in ["*༺ Queen ༻*", "👑 ୨୧ 𝑶𝒘𝒏𝒆𝒓"] for role in member_role_names)
+    return commands.check(predicate)
 
-# --- نظام كلاسات لعبة بطولة الـ XO بالأزرار ---
-
-class XOBoard:
-    def __init__(self, p1, p2):
-        self.p1 = p1
-        self.p2 = p2
-        self.board = ["🟩"] * 9
-        self.current_turn = p1
-        self.winner = None
-        self.is_draw = False
-
-    def check_winner(self):
-        win_conditions = [
-            (0, 1, 2), (3, 4, 5), (6, 7, 8),  # أفقياً
-            (0, 3, 6), (1, 4, 7), (2, 5, 8),  # عمودياً
-            (0, 4, 8), (2, 4, 6)              # قطرياً
-        ]
-        for c in win_conditions:
-            if self.board[c[0]] == self.board[c[1]] == self.board[c[2]] != "🟩":
-                self.winner = self.p1 if self.board[c[0]] == "❌" else self.p2
-                return self.winner
-        if "🟩" not in self.board:
-            self.is_draw = True
-        return None
-
-class XOPlayView(discord.ui.View):
-    def __init__(self, game_match):
-        super().__init__(timeout=60)
-        self.match = game_match
-        for i in range(9):
-            button = discord.ui.Button(label=str(i+1), style=discord.ui.ButtonStyle.secondary, row=i//3)
-            button.callback = self.make_callback(i)
-            self.add_item(button)
-
-    def make_callback(self, index):
-        async def callback(interaction: discord.Interaction):
-            if interaction.user != self.match.current_turn:
-                await interaction.response.send_message("❌ هذا ليس دوركِ الحالي!", ephemeral=True)
-                return
-            if self.match.board[index] != "🟩":
-                await interaction.response.send_message("❌ هذا المربع مأخوذ بالفعل!", ephemeral=True)
-                return
-
-            mark = "❌" if interaction.user == self.match.p1 else "⭕"
-            self.match.board[index] = mark
-            self.children[index].label = mark
-            self.children[index].style = discord.ui.ButtonStyle.primary if mark == "❌" else discord.ui.ButtonStyle.success
-            self.children[index].disabled = True
-
-            self.match.check_winner()
-
-            if self.match.winner or self.match.is_draw:
-                for child in self.children:
-                    child.disabled = True
-                self.stop()
-                if not self.match.winner:
-                    self.match.winner = random.choice([self.match.p1, self.match.p2])
-                
-                embed = discord.Embed(
-                    title="🏁 انتهاء المباراة!",
-                    description=f"المواجهة بين: {self.match.p1.mention} ضد {self.match.p2.mention}\n\n🏆 الفائز المتأهل: {self.match.winner.mention}!",
-                    color=discord.Color.green()
-                )
-                await interaction.response.edit_message(embed=embed, view=self)
-                return
-
-            self.match.current_turn = self.match.p2 if self.match.current_turn == self.match.p1 else self.match.p1
-            embed = discord.Embed(
-                title="⚔️ مباراة XO نشطة ⚔️",
-                description=f"❌ لاعب 1: {self.match.p1.mention}\n⭕ لاعب 2: {self.match.p2.mention}\n\n🚨 الدور الحالي: {self.match.current_turn.mention}",
-                color=discord.Color.blue()
-            )
-            await interaction.response.edit_message(embed=embed, view=self)
-        return callback
-
-class XOJoinView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=30)
-        self.players = []
-
-    @discord.ui.button(label="انضمام للبطولة 🎮", style=discord.ui.ButtonStyle.blurple)
-    async def join_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user in self.players:
-            await interaction.response.send_message("❌ أنتِ مسجلة بالفعل!", ephemeral=True)
-            return
-        if len(self.players) >= 30:
-            await interaction.response.send_message("❌ اكتمل الحد الأقصى (30 لاعب)!", ephemeral=True)
-            return
-        self.players.append(interaction.user)
-        await interaction.response.send_message(f"✅ تم تسجيلكِ! المشتركين الآن: {len(self.players)}", ephemeral=True)
-
-# --- أحداث البوت الفلاتر والردود التلقائية ---
+# ==================== الأحداث (Events) ====================
 
 @bot.event
 async def on_ready():
-    print(f'تم تشغيل البوت بنجاح باسم: {bot.user.name}')
+    print(f'=== Elysia Bot Is Online ===')
+    print(f'Logged in as: {bot.user.name}')
+    print(f'============================')
+    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="Elysia Community"))
+
+# نظام الترحيب التلقائي بالأعضاء الجدد
+@bot.event
+async def on_member_join(member):
+    channel = discord.utils.get(member.guild.text_channels, name="welcome")
+    if channel:
+        embed = discord.Embed(
+            title="🌸 عضو جديد في ديارنا! 🌸",
+            description=f"أهلاً بك يا {member.mention} في سيرفرنا المميز!\nنورتنا بوجودك، أتمنى لك وقتاً ممتعاً معنا.",
+            color=discord.Color.from_rgb(255, 182, 193)
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"أنت العضو رقم {len(member.guild.members)}")
+        try:
+            await channel.send(embed=embed)
+        except discord.Forbidden:
+            print("خطأ: البوت لا يملك صلاحية الإرسال في روم الترحيب.")
 
 @bot.event
 async def on_message(message):
-    if message.author == bot.user:
+    global is_paused
+    if message.author == bot.user: return
+    clean_content = message.content.strip()
+
+    # تحويل الاختصارات ومعالجتها قبل أي قيود
+    if clean_content.startswith('!حذف نك'):
+        message.content = clean_content.replace('!حذف نك', '!حذف_نك', 1)
+    if clean_content.startswith('!ستريك') and len(message.mentions) > 0:
+        message.content = clean_content.replace('!ستريك', '!ستريك_منشن', 1)
+
+    member_role_names = [role.name for role in message.author.roles]
+    has_admin_privilege = any(r in ["*༺ Queen ༻*", "👑 ୨୧ 𝑶𝒘𝒏𝒆𝒓"] for r in member_role_names)
+
+    # التحكم في وضع السكون
+    if clean_content == '-توقيف':
+        if has_admin_privilege:
+            is_paused = True
+            await message.channel.send('💤 البوت الآن في وضع السكون.')
+        return
+    if clean_content == '-تشغيل':
+        if has_admin_privilege:
+            is_paused = False
+            await message.channel.send('🤖 عدت للعمل يا امبراطورتي!')
         return
 
-    # جلب أسماء رتب العضو المرسل بشكل آمن لمنع الأخطاء في الخاص
-    user_roles = [role.name for role in message.author.roles] if hasattr(message.author, 'roles') else []
-    is_queen = "*༺ Queen ༻*" in user_roles
+    if is_paused: return
 
-    # 1. رد المنشن الخاص برتبة الملكة فقط
+    # --- الردود التلقائية والمنشن ---
+    if clean_content == '!يا فانزي':
+        await message.channel.send('لبيه يا عيوني؟ 🌸')
+        return
+        
     if bot.user.mentioned_in(message) and not message.mention_everyone:
-        if is_queen:
-            await message.channel.send(f"{message.author.mention} لبيه ينبضي آمريني")
-            return
-        else:
-            await message.channel.send("نعم عزيزتي")
-            return
-
-    # 2. رد "لا تعيدها" الخاص برتبة الملكة فقط
-    if message.content.strip() == "لا تعيدها":
-        if is_queen:
-            await message.channel.send("آسف يا روحي")
-            return
-
-    # 3. فلتر الضحك والتسليك (ههههه إلى ما لا نهاية)
-    if re.search(r'^[هـ]{3,}$', message.content.strip()):
-        await message.channel.send("لا تسلكِ مافي شي يضحك")
+        await message.channel.send('نعم عزيزتي')
+        return
+    if clean_content == 'لا تعيديها':
+        await message.channel.send('آسفه يا مولاتي')
+        return
+    if len(clean_content) >= 5 and all(char == 'ه' for char in clean_content):
+        await message.channel.send('ترا ما يضحك لا تسلكِ')
         return
 
-    # هام جداً: معالجة الأوامر دائماً لضمان عدم تعليق البوت!
+    # معالجة الأوامر البريفكس (مهم جداً أن تكون في نهاية الحدث)
     await bot.process_commands(message)
 
-# --- الأوامر الإدارية والتحكم ---
+# ==================== الأوامر (Commands) ====================
 
-# أمر قائمة الأوامر (محمي بالكامل لـ Queen فقط)
-@bot.command(name="اوامر")
-async def اوامر_queen(ctx):
-    user_roles = [role.name for role in ctx.author.roles]
-    if "*༺ Queen ༻*" not in user_roles:
-        return  # تجاهل تام لغير رتبة الكوين
-
-    help_text = (
-        "👑 **قائمة جميع أوامر البوت المتاحة للـ Queen:**\n\n"
-        "✨ **أوامر عامة وخاصة:**\n"
-        "`!اوامر` ⇦ عرض هذه القائمة (للملكة فقط).\n"
-        "`!حذف (عدد)` ⇦ حذف عدد معين من الرسائل.\n"
-        "`!نك @منشن الاسم` ⇦ تغيير نك نيم العضو.\n"
-        "`!حذف نك @منشن` ⇦ إزالة النك نيم وإعادته للافتراضي.\n"
-        "`!ستريك @منشن (عدد)` ⇦ وضع رقم الستريك بجانب الاسم مع 🔥.\n"
-        "`!يا فانزي` ⇦ رد ترحيبي.\n\n"
-        "🎮 **أوامر الألعاب المتاحة (`!العاب`):**\n"
-        "`!كراسي` | `!مافيا` | `!روليت` | `!ريبلكا` | `!لغم` | `!xo` | `!خمن` | `!اعلام` | `!نرد` | `!تويت` | `!اسرع`"
-    )
-    await ctx.send(help_text)
-
-# أمر الحذف بالعدد
-@bot.command(name="حذف")
-@commands.has_permissions(manage_messages=True)
-async def delete_messages(ctx, amount: int):
-    await ctx.channel.purge(limit=amount + 1)
-    await ctx.send(f"✅ تم حذف {amount} رسالة بنجاح.", delete_after=3)
-
-# أمر تغيير اللقب (!نك @منشن الاسم)
-@bot.command(name="نك")
-async def change_nickname(ctx, member: discord.Member, *, new_name: str):
+# 1. أمر النك المحدث
+@bot.command()
+async def نك(ctx, member: discord.Member = None, *, new_name: str = None):
+    if is_paused: return
+    member_role_names = [role.name for role in ctx.author.roles]
+    has_admin_privilege = any(r in ["*༺ Queen ༻*", "👑 ୨୧ 𝑶𝒘𝒏𝒆𝒓"] for r in member_role_names)
+    if not has_admin_privilege:
+        await ctx.send("❌ عذراً، هذا الأمر مخصص للإمبراطورة وصاحبات رتب الإدارة العليا فقط!", delete_after=5)
+        return
+    if member is None or new_name is None:
+        await ctx.send("❌ مثال: `!نك @العضوة الاسم الجديد`", delete_after=5)
+        return
     try:
         await member.edit(nick=new_name)
-        await ctx.send(f"✅ تم تعديل نك نيم {member.mention} إلى: **{new_name}**")
+        await ctx.send(f"✅ تم تغيير اسم {member.mention} بنجاح إلى: **{new_name}** 👑")
     except discord.Forbidden:
-        await ctx.send("❌ لا أملك صلاحية تعديل اللقب لهذا الشخص.")
+        await ctx.send("❌ ليس لدي صلاحية لتعديل اسم هذه العضوة (تأكدي من رفع رتبة البوت).")
+    except Exception as e:
+        await ctx.send(f"⚠️ حدث خطأ: {e}")
 
-# أمر حذف اللقب (!حذف نك @منشن)
-@bot.command(name="حذف_نك", aliases=["حذف نك"])
-async def remove_nickname(ctx, member: discord.Member):
+# 2. أمر حذف النك
+@bot.command(name="حذف_نك")
+async def remove_nick(ctx, member: discord.Member = None):
+    if is_paused: return
+    member_role_names = [role.name for role in ctx.author.roles]
+    has_admin_privilege = any(r in ["*༺ Queen ༻*", "👑 ୨୧ 𝑶𝒘𝒏𝒆𝒓"] for r in member_role_names)
+    if not has_admin_privilege: return
+    if member is None: return
     try:
         await member.edit(nick=None)
-        await ctx.send(f"✅ تم إزالة النك نيم لـ {member.mention}.")
-    except discord.Forbidden:
-        await ctx.send("❌ لا أملك صلاحية إزالة اللقب لهذا الشخص.")
+        await ctx.send(f"✨ تم إزالة اللقب المستعار لـ {member.mention} بنجاح.")
+    except Exception as e:
+        await ctx.send(f"⚠️ حدث خطأ: {e}")
 
-# أمر تعديل الستريك بجانب الاسم (محمي للملكة والـ Owner)
-@bot.command(name="ستريك")
-async def set_streak_name(ctx, member: discord.Member, streak_count: int):
-    user_roles = [role.name for role in ctx.author.roles]
-    if "*༺ Queen ༻*" in user_roles or "୨୧ 𝑶𝒘𝒏𝒆𝒓" in user_roles:
-        try:
-            current_nick = member.nick if member.nick else member.name
-            base_name = current_nick.split(" [")[0].strip()
-            new_nick = f"{base_name} [{streak_count} 🔥]"
-            await member.edit(nick=new_nick)
-            await ctx.send(f"🔥 تم وضع الستريك لـ {member.mention} بجانب الاسم: **{new_nick}**")
-        except discord.Forbidden:
-            await ctx.send("❌ فشل تعديل الاسم، يرجى رفع رتبة البوت وتفعيل صلاحية إدارة الأسماء.")
-    else:
-        await ctx.send("🔒 عذراً عزيزتي، هذا الأمر مخصص فقط لـ إدارة السيرفر العليا والملكة.")
-
-# أمر يا فانزي
-@bot.command(name='يا')
-async def ya(ctx, *, arg=None):
-    if arg == 'فانزي':
-        await ctx.send("لبيه يا عيوني؟ 🌸")
-
-# --- أوامر الألعاب بالكامل ---
-
-@bot.command(name="العاب")
-async def العاب(ctx):
+# 3. أمر ستريك المنشن المخصص
+@bot.command(name="ستريك_منشن")
+async def streak_mention_command(ctx, member: discord.Member = None, number: str = None):
     if is_paused: return
-    embed = discord.Embed(
-        title="🎮 قـائـمـة الألـعـاب الـمـتـاحـة فـي الـسـيرفـر 🎮",
-        description="استخدم البادئة (!) قبل اسم اللعبة لبدء اللعب فوراً مَع طاقم السيرفر والأعضاء!",
-        color=discord.Color.purple()
-    )
-    embed.add_field(name="🕵️‍♂️ !مافيا", value="بدء سحب قرعة أدوار المافيا عشوائياً بين الأعضاء المتواجدين.", inline=True)
-    embed.add_field(name="🔫 !روليت", value="تحدي الحظ الروسي (إقصاء أو نجاة عشوائية).", inline=True)
-    embed.add_field(name="📝 !ريبلكا", value="يعطيكِ حرف عشوائي لتبدأوا لعبة (إنسان، حيوان، نبات...).", inline=True)
-    embed.add_field(name="💣 !لغم", value="اختبر حظك واختر مربعاً لتتفادى الألغام الكامنة.", inline=True)
-    embed.add_field(name="❌ !xo", value="بطولة الـ XO الاستراتيجية الكبرى بالأزرار وتصفيات بين المشتركين.", inline=True)
-    embed.add_field(name="🗺️ !خمن", value="يعرض صورة لمعلم شهير في بلد ما، وعليكِ تخمين الدولة.", inline=True)
-    embed.add_field(name="🏴 !اعلام", value="يعرض علم دولة عشوائي وعليكِ معرفة اسم الدولة بسرعة.", inline=True)
-    embed.add_field(name="🎲 !نرد", value="رمي النرد واستخراج أرقام الحظ العشوائية.", inline=True)
-    embed.add_field(name="💬 !تويت", value="لعبة كت تويت الشهيرة (أسئلة واعترافات للسيرفر).", inline=True)
-    embed.add_field(name="⚡ !اسرع", value="لعبة السرعة، يظهر البوت كلمة وعليك كتابتها أولاً.", inline=True)
-    embed.set_footer(text="Elysia Community Bot ୨୧")
-    await ctx.send(embed=embed)
+    member_role_names = [role.name for role in ctx.author.roles]
+    has_admin_privilege = any(r in ["*༺ Queen ༻*", "👑 ୨୧ 𝑶𝒘𝒏𝒆𝒓"] for r in member_role_names)
+    if not has_admin_privilege: return
+    if member is None or number is None: return
+    current_base_name = member.nick if member.nick else member.name
+    if "🔥" in current_base_name:
+        current_base_name = current_base_name.split("🔥")[0].strip()
+    new_nickname = f"{current_base_name} 🔥{number}"
+    try:
+        await member.edit(nick=new_nickname)
+        await ctx.send(f"✅ تم تحديث ستريك {member.mention} بنجاح إلى: **{number}** 🔥")
+    except Exception as e:
+        await ctx.send(f"⚠️ حدث خطأ: {e}")
 
-@bot.command(name="xo")
-async def xo_tournament(ctx):
-    if is_paused: return
-    view = XOJoinView()
-    embed = discord.Embed(
-        title="🏆 فتح التسجيل في بطولة الـ XO الجماعية 🏆",
-        description="اضغطي على الزر بالأسفل للانضمام إلى قائمة التحدي المباشر!\n\n⏳ **الوقت المتاح للتسجيل:** 30 ثانية فقط.\n👥 **العدد المسموح:** من 2 إلى 30 لاعب كحد أقصى.",
-        color=discord.Color.purple()
-    )
-    init_msg = await ctx.send(embed=embed, view=view)
-    await asyncio.sleep(30)
-    view.stop()
+# 4. كلاس وأمر لعبة الكراسي التفاعلية
+class ChairsGameView(discord.ui.View):
+    def __init__(self, ctx, players):
+        super().__init__(timeout=30.0)
+        self.ctx = ctx
+        self.players = players.copy()
+        self.claimed_players = []
+        self.chairs_count = len(self.players) - 1
+        self.game_over = False
+        for i in range(self.chairs_count):
+            btn = discord.ui.Button(label=f"🪑 كرسي {i+1}", style=discord.ButtonStyle.success, custom_id=f"chair_{i}")
+            btn.callback = self.make_callback(i)
+            self.add_item(btn)
 
-    players_list = view.players
-    if len(players_list) < 2:
-        await ctx.send("❌ لم ينضم عدد كافٍ من اللاعبين لبدء البطولة (أقل حد لاعبين).")
-        return
+    def make_callback(self, index):
+        async def button_callback(interaction: discord.Interaction):
+            if interaction.user not in self.players: return
+            if interaction.user in self.claimed_players: return
+            self.claimed_players.append(interaction.user)
+            for item in self.children:
+                if item.custom_id == f"chair_{index}":
+                    item.disabled = True
+                    item.style = discord.ButtonStyle.secondary
+                    item.label = f"🔒 محجوز لـ {interaction.user.display_name}"
+                    break
+            await interaction.response.edit_message(view=self)
+            await self.ctx.send(f"💨 {interaction.user.mention} جلست وحجزت كرسيها!")
+            if len(self.claimed_players) == self.chairs_count:
+                self.stop()
+                await self.end_round()
+        return button_callback
 
-    round_num = 1
-    while len(players_list) > 1:
-        random.shuffle(players_list)
-        bye_player = players_list.pop() if len(players_list) % 2 != 0 else None
-
-        schedule_text = f"📋 **جدول مواجهات الـ XO الحالية - الجولة [{round_num}]:**\n\n"
-        matches = []
-        for i in range(0, len(players_list), 2):
-            p1, p2 = players_list[i], players_list[i+1]
-            matches.append(XOBoard(p1, p2))
-            schedule_text += f"⚔️ مباراة: {p1.mention} **Vs** {p2.mention}\n"
-        if bye_player:
-            schedule_text += f"✨ تأهل تلقائي بهذه الجولة: {bye_player.mention}\n"
-
-        await ctx.send(embed=discord.Embed(title=f"⚔️ انطلاق الجولة {round_num} ⚔️", description=schedule_text, color=discord.Color.gold()))
-        await asyncio.sleep(4)
-
-        next_round_players = []
-        if bye_player:
-            next_round_players.append(bye_player)
-
-        for idx, match in enumerate(matches):
-            round_embed = discord.Embed(
-                title=f"🎯 المباراة [{idx + 1}] بدأت الآن!",
-                description=f"❌ لاعب 1: {match.p1.mention}\n⭕ لاعب 2: {match.p2.mention}\n\n🚨 الدور الحالي: {match.p1.mention}",
-                color=discord.Color.blue()
-            )
-            play_view = XOPlayView(match)
-            await ctx.send(embed=round_embed, view=play_view)
-            await play_view.wait()
-            next_round_players.append(match.winner)
+    async def end_round(self):
+        if self.game_over: return
+        self.game_over = True
+        loser = None
+        for p in self.players:
+            if p not in self.claimed_players:
+                loser = p
+                break
+        if loser:
+            self.players.remove(loser)
+            await self.ctx.send(f"💀 **انتهت الجولة!** {loser.mention} تم إقصاؤها! 🚷")
+        if len(self.players) == 1:
+            await self.ctx.send(f"👑✨ **الفائزة النهائية هي: {self.players[0].mention}!** ✨👑")
+        elif len(self.players) > 1:
             await asyncio.sleep(3)
+            next_view = ChairsGameView(self.ctx, self.players)
+            await self.ctx.send("🎵 **اضغطوا الكراسي المتاحة فورا!**", view=next_view)
 
-        players_list = next_round_players
-        round_num += 1
-
-    await ctx.send(embed=discord.Embed(
-        title="👑 بـطـل الـسـيـرفـر الـنـهـائـي 👑",
-        description=f"🎉 ألف مبروك الفوز ببطولة الـ XO الكبرى للاعب:\n\n🏆  {players_list[0].mention}  🏆\n\nلقد تفوقتِ على الجميع بجدارة! ✨🔥",
-        color=discord.Color.from_rgb(255, 215, 0)
-    ))
+    async def on_timeout(self):
+        await self.end_round()
 
 @bot.command()
-async def مافيا(ctx):
+@has_allowed_role()
+async def كراسي(ctx):
     if is_paused: return
-    await ctx.send("🎲 **جاري توزيع أدوار لعبة المافيا عشوائياً على الروم الحالي...**\nتم اختيار الأدوار الأساسية لهذه الجولة بنجاح!")
+    await ctx.send("🎵 **لعبة الكراسي الموسيقية بدأت!** 🎵\nاضغطي على زر **(انضمام 🎮)** للمشاركة!")
+    registered_players = []
+    class JoinView(discord.ui.View):
+        def __init__(self): super().__init__(timeout=20.0)
+        @discord.ui.button(label="انضمام 🎮", style=discord.ButtonStyle.primary)
+        async def join_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.user in registered_players: return
+            registered_players.append(interaction.user)
+            await interaction.response.send_message("✅ تم تسجيلكِ!", ephemeral=True)
+    join_view = JoinView()
+    msg = await ctx.send("سجلي هنا:", view=join_view)
+    await asyncio.sleep(20.0)
+    if len(registered_players) < 2:
+        await ctx.send("❌ إلغاء، عدد اللاعبين غير كافٍ.")
+        return
+    first_round_view = ChairsGameView(ctx, registered_players)
+    await ctx.send("🪑 **توقفت الموسيقى!! أسرعوا!**", view=first_round_view)
 
-@bot.command()
-async def روليت(ctx):
-    if is_paused: return
-    outcomes = ["💥 *طخخخ! لقد خسرتِ في الروليت الحتمية وجاءت الرصاصة فيكِ!*", "🔒 *نجاة! مرت الرصاصة بسلام ولم يصيبكِ مكروه هذه المرة.*"]
-    await ctx.send(f"🔫 {ctx.author.mention} يقوم بسحب زناد الروليت الروسية...\n\n{random.choice(outcomes)}")
-
-@bot.command()
-async def ريبلكا(ctx):
-    if is_paused: return
-    await ctx.send(f"📝 **لعبة ريبليكا:**\n> الحرف المختار لهذه الجولة هو: **[ {random.choice(replica_letters)} ]**")
-
-@bot.command()
-async def لغم(ctx):
-    if is_paused: return
-    choice = random.choice(["🟩 آمن", "🟩 آمن", "💣 لـغـم انفجر!"])
-    await ctx.send(f"💣 **لقد خطوتِ خطوة في ساحة الألغام:**\n> النتيجة: {choice}")
-
-@bot.command()
-async def خمن(ctx):
-    if is_paused: return
-    place = random.choice(guess_country_data)
-    embed = discord.Embed(title="🗺️ خمني الدولة التي يوجد بها هذا المعلم الشهير؟", color=discord.Color.blue())
-    embed.set_image(url=place["image"])
-    await ctx.send(embed=embed)
-
-@bot.command()
-async def اعلام(ctx):
-    if is_paused: return
-    flag = random.choice(flags_data)
-    embed = discord.Embed(title="🏴 ما هي الدولة صاحبة هذا العلم؟", color=discord.Color.orange())
-    embed.set_image(url=flag["image"])
-    await ctx.send(embed=embed)
-
-@bot.command()
-async def نرد(ctx):
-    if is_paused: return
-    d1, d2 = random.randint(1, 6), random.randint(1, 6)
-    await ctx.send(f"🎲 لقد رميتِ أحجار النرد:\n> الحجر الأول: **{d1}** | الثاني: **{d2}**\n✨ المجموع: **{d1 + d2}**")
-
-@bot.command(name="تويت")
-async def tweet_game(ctx):
-    if is_paused: return
-    await ctx.send(f"💬 **كت تويت الفعاليات:**\n> {random.choice(cut_tweets)}")
-
-@bot.command(name="اسرع")
-async def fast_game(ctx):
-    if is_paused: return
-    word = random.choice(fast_words)
-    await ctx.send(f"⚡ **أسرع واحدة تكتب الكلمة التالية صحيحة تفوز:**\n> الكلمة المقلوبة هي: **{word[::-1]}**")
-
-# تشغيل البوت عبر التوكن المخزن في Railway
-token = os.getenv("TOKEN")
-if token:
-    bot.run(token)
-                    
+# تشغيل البوت بسحب التوكن بشكل آمن من Railway Variables
+TOKEN = os.environ.get("TOKEN")
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("خطأ: لم يتم العثور على متغير TOKEN!")
+        
