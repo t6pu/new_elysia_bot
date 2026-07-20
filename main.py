@@ -21,7 +21,7 @@ cut_tweets = [
     "شخص مستحيل ترفضين له طلب؟",
     "صفة فيكِ تبغين تغيرينها؟",
     "أكثر شي يعدل مزاجكِ بكلمتين؟",
-    "لو أتيحت لكِ فرصة السفر الآن، وين تروحين؟",
+    "لو أتيحت لكِ فرصة السفر الآن، وين تروحين？",
     "شيء سويتيه وندمتِ عليه لاحقاً؟"
 ]
 fast_words = ["سيرفر", "ديسكورد", "فعاليات", "أليسيا", "ملكة", "كراسي", "مافيا"]
@@ -48,7 +48,15 @@ async def on_message(message):
     user_roles = [role.name for role in message.author.roles] if hasattr(message.author, 'roles') else []
     is_queen = "*༺ Queen ༻*" in user_roles
 
-    # 1. رد المنشن الخاص برتبة الملكة فقط
+    # تنظيف الرسالة للتحقق بدقة
+    cleaned_msg = message.content.strip()
+
+    # 1. رد السلام عليكم بالتعديل المطلوب وحروف الترحيب الزائدة للملكة والسيرفر
+    if cleaned_msg in ["السلام عليكم", "السلام عليكم ورحمة الله وبركاته"]:
+        await message.channel.send("وعليكم السلام ورحمة الله وبركاته ااارررحححبببييي تتتررراااحححيييببب اااللممططررر و ااالللسسسيييللل و ااالللهههيييللل ااارررحححبببييي تتتررراااحححيييبببب ااالللمممطططررر يااا ااالللكككووويييننن")
+        return
+
+    # 2. رد المنشن الخاص برتبة الملكة فقط
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         if is_queen:
             await message.channel.send(f"{message.author.mention} لبيه ينبضي آمريني")
@@ -57,14 +65,14 @@ async def on_message(message):
             await message.channel.send("نعم عزيزتي")
             return
 
-    # 2. رد أمر "لا تعيدها" الخاص برتبة الملكة فقط
-    if message.content.strip() == "لا تعيدها":
+    # 3. رد أمر "لا تعيدها" الخاص برتبة الملكة فقط
+    if cleaned_msg == "لا تعيدها":
         if is_queen:
             await message.channel.send("آسف يا روحي")
             return
 
-    # 3. فلتر الضحك والتسليك (ههههه إلى ما لا نهاية)
-    if re.search(r'^ه{3,}$', message.content.strip()):
+    # 4. فلتر الضحك والتسليك (ههههه إلى ما لا نهاية)
+    if re.search(r'^ه{3,}$', cleaned_msg):
         await message.channel.send("لا تسلكِ مافي شي يضحك")
         return
 
